@@ -83,6 +83,14 @@ python scripts/pipeline.py --queue queue.jsonl
 
 B 站多 P 视频默认只处理第 1P，用 `--page N` 指定其他。
 
+想让 B 站下 720P/1080P（未登录只有 480P），跑一次登录脚本：
+
+```bash
+python scripts/bili_login.py
+```
+
+会弹出一个**独立的**浏览器窗口（不影响你日常用的那个），扫码登录后自动把登录态存进配置。也可以直接粘 `SESSDATA` 到配置文件的 `bili_sessdata`。
+
 产物落在 `<workdir>/downloads/<平台>-<ID>/`，其中 `note_draft.md` 是待归纳的草稿，`overlay_text.json` 是画面文字识别结果（加了 `--ocr` 才有）。
 
 ## 需要修改的配置项
@@ -92,7 +100,7 @@ B 站多 P 视频默认只处理第 1P，用 `--page N` 指定其他。
 | 配置项 | 环境变量 | 作用 | 不配的后果 |
 |---|---|---|---|
 | `deepseek_api_key` | `DEEPSEEK_API_KEY` | 画面文字识别 | 不加 `--ocr` 时不会识别画面上的文字卡 |
-| `bili_sessdata` | `BILI_SESSDATA` | B 站登录态 | B 站最高只能下 480P，画质低时画面文字可能认不清 |
+| `bili_sessdata` | `BILI_SESSDATA` | B 站登录态 | B 站最高只能下 480P，画质低时画面文字可能认不清。用 `bili_login.py` 生成 |
 | `browser_exe` | `DY_BROWSER_EXE` | 浏览器路径 | 自动探测常见位置；探测不到则抖音链接无法处理 |
 | `model_dir` | `WHISPER_MODEL` | 转写模型目录 | 自动扫描本机已有模型；找不到则需先跑 `fetch_model.py` |
 | `vault` | `OBSIDIAN_VAULT` | Obsidian 库根目录 | 仅影响 `--doctor` 的显示，不影响流水线 |
@@ -126,6 +134,7 @@ B 站多 P 视频默认只处理第 1P，用 `--page N` 指定其他。
     ├── fetch_douyin.py         # 抖音：隔离浏览器 + 内联 CDP
     ├── douyin_dl.py            # 抖音：选最高码率并下载
     ├── bili_fetch.py           # B 站：解析链接 + 调 API + 下载合并
+    ├── bili_login.py           # B 站：扫码登录，保存登录态（可选）
     ├── asr_local.py            # 本地转写
     ├── ocr_frames.py           # 画面文字识别
     ├── fetch_model.py          # 下载转写模型

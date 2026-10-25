@@ -88,6 +88,28 @@ agent_created: true
 6. metadata 字段对齐抖音（aweme_id 填 bvid），S4 生成草稿无需平台分支
 ```
 
+### 拿 B 站登录态（提升画质）
+
+```bash
+python scripts/bili_login.py          # 起独立 profile → 扫码 → 自动存 SESSDATA
+python scripts/bili_login.py --profile main   # 用日常 profile（需先关浏览器）
+```
+
+**不要试图从磁盘读 Chrome cookie**。Chrome 127+ 起改用 App-Bound Encryption：
+
+| 尝试 | 结果 |
+|---|---|
+| 解 `Local State` 的 `encrypted_key` | Chrome 151 里只有 37 字节（`DPAPI` + 32），`CryptUnprotectData` 返回 87（参数无效） |
+| 把后 32 字节直接当 AES-256 key | 43 条 cookie 全部解密失败 |
+| CDP `Network.getAllCookies` / `Network.getCookies` / `Storage.getCookies`（默认 profile） | 三个接口全部返回 **0 条** |
+| 页面内 `Runtime.evaluate("document.cookie")` | 拿不到值 |
+
+结论：新版 Chrome 对默认 profile 的 cookie 访问是硬限制。**只能让浏览器自己交出来**，
+即用 CDP 在**自己启动的实例**里读（`bili_login.py` 干的就是这个）。
+
+`--profile main` 这条路径留给「浏览器是旧版本 / 关掉浏览器后能正常读」的场景，
+在 Chrome 151 上会直接报「没有登录态」。
+
 ### B 站侧失败情况
 
 | 现象 | 原因 | 报错与处置 |
