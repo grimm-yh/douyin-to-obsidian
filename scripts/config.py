@@ -138,6 +138,19 @@ def python_exe() -> str:
     return sys.executable
 
 
+def deepseek_key(cli_value: str | None = None) -> str | None:
+    """DeepSeek API key，用于画面文字识别（可选能力）。
+
+    优先级：CLI > 环境变量 DEEPSEEK_API_KEY > 配置文件 deepseek_api_key。
+    没有 key 不影响 ASR 链路，只是拿不到画面上的文字。
+    """
+    if cli_value:
+        return cli_value
+    if os.environ.get("DEEPSEEK_API_KEY"):
+        return os.environ["DEEPSEEK_API_KEY"]
+    return _CFG.get("deepseek_api_key") or None
+
+
 def dump() -> str:
     """`--doctor` 用：打印解析结果，方便排查。"""
     browser = get("browser_exe")
@@ -163,6 +176,8 @@ def dump() -> str:
         lines.append("websocket-cli : ✓")
     except ImportError:
         lines.append("websocket-cli : ✗ 未安装（pip install websocket-client）")
+    k = deepseek_key()
+    lines.append(f"DeepSeek key  : {'✓ 已配置（画面文字识别可用）' if k else '✗ 未配置（跳过画面文字识别）'}")
     return "\n".join(lines)
 
 

@@ -166,7 +166,7 @@ def pick_tags(desc: str) -> list[str]:
     return out[:5] or ["待归类"]
 
 
-def step_draft(folder: str, source_url: str) -> str | None:
+def step_draft(folder: str, source_url: str, overlay: list[dict] | None = None) -> str | None:
     meta_p = os.path.join(folder, "metadata.json")
     txt_p = os.path.join(folder, "video.txt")
     meta = json.load(open(meta_p, encoding="utf-8")) if os.path.exists(meta_p) else {}
@@ -176,6 +176,21 @@ def step_draft(folder: str, source_url: str) -> str | None:
     title = make_title(desc, f"抖音视频-{meta.get('aweme_id')}")
     tags = pick_tags(desc)
     body = open(txt_p, encoding="utf-8").read() if os.path.exists(txt_p) else "（未转写）"
+
+    # 画面文字单独成节，插在原文转写之前
+    overlay_sec: list[str] = []
+    asr_no = "五"
+    if overlay:
+        asr_no = "六"
+        overlay_sec = [
+            "## 五、画面文字（视觉识别）",
+            "",
+            "> 以下内容来自画面里的文字卡，**不在口播转写中**。归纳配方/参数时优先用它。",
+            "",
+        ]
+        for b in overlay:
+            mm, ss = divmod(int(b["second"]), 60)
+            overlay_sec += [f"### `{mm:02d}:{ss:02d}`", "", "```text", b["text"], "```", ""]
 
     lines = [
         "---",
@@ -205,7 +220,8 @@ def step_draft(folder: str, source_url: str) -> str | None:
         "",
         "- （待填）",
         "",
-        "## 五、原文转写",
+        *overlay_sec,
+        f"## {asr_no}、原文转写",
         "",
         "> [!note]- 带时间戳全文（点击展开）",
         *["> " + ln for ln in body.strip().splitlines()],
@@ -215,8 +231,11 @@ def step_draft(folder: str, source_url: str) -> str | None:
         "> [!warning] 质量闸门",
         "> 转写自本地 faster-whisper。真人抖音口播字错率约 3–4%，",
         "> 关键结论必须回看原片核对，**未经复核前不要当作定论引用**。",
-        "",
     ]
+    if overlay:
+        lines.append("> 画面文字由视觉模型识别，已抽帧目视复核。")
+    lines.append("")
+
     out = os.path.join(folder, "note_draft.md")
     with open(out, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
@@ -224,12 +243,15 @@ def step_draft(folder: str, source_url: str) -> str | None:
     log("S4", f"  标题: {title}")
     log("S4", f"  标签: {', '.join(tags)}（取自 hashtag，需人工确认）")
     log("S4", f"  时长: {dur_s}s  正文待归纳")
+    if overlay:
+        log("S4", f"  画面文字: {len(overlay)} 处已并入草稿")
     return out
 
 
 # ---------------------------------------------------------------- 主流程
 
-def run_one(url: str, workdir: str, skip_asr: bool, fresh: bool, prompt: str | None) -> dict:
+def run_one(url: str, workdir: str, skip_asr: bool, fresh: bool,
+            prompt: str | None, ocr: bool = False) -> dict:
     res = {"url": url, "status": "failed", "stage": "S1"}
     log("S1", f"处理 {url}")
     aid = resolve_aweme_id(url)
@@ -251,18 +273,36 @@ def run_one(url: str, workdir: str, skip_asr: bool, fresh: bool, prompt: str | N
     res["folder"] = folder
     res["stage"] = "S3"
 
-    if skip_asr:
-        log("S3", "已跳过（--skip-asr）")
+    if not skip_asr:
+        txt = step_asr(folder, prompt)
+        if not txt:
+            log("S3", "✗ 转写失败")
+            return res
+    else:
+        log("S3", "已跳过转写（--skip-asr）")
+
+    # 画面文字：口播拿不到的信息（配方克数、参数表）只能从这里来
+    overlay = None
+    if ocr:
+        res["stage"] = "S3b"
+        video = next((os.path.join(folder, f) for f in os.listdir(folder)
+                      if f.lower().endswith(".mp4")), None)
+        if video:
+            try:
+                import ocr_frames
+                overlay = ocr_frames.scan(video, quiet=False)["blocks"]
+                res["overlay"] = len(overlay)
+            except Exception as e:
+                log("S3b", f"✗ 画面文字识别失败（不影响其他环节）：{e}")
+        else:
+            log("S3b", "✗ 没找到视频文件")
+
+    if skip_asr and not ocr:
         res["status"] = "partial"
         return res
 
-    txt = step_asr(folder, prompt)
-    if not txt:
-        log("S3", "✗ 转写失败")
-        return res
     res["stage"] = "S4"
-
-    draft = step_draft(folder, url)
+    draft = step_draft(folder, url, overlay)
     res["draft"] = draft
     res["status"] = "done" if draft else "partial"
     return res
@@ -276,6 +316,8 @@ def main() -> int:
     ap.add_argument("--skip-asr", action="store_true")
     ap.add_argument("--fresh", action="store_true", help="忽略已有产物强制重抓")
     ap.add_argument("--prompt", default=None, help="ASR 领域词，显著降低术语错字")
+    ap.add_argument("--ocr", action="store_true",
+                    help="识别画面上的文字卡（配方克数、参数表）。需 DeepSeek key，按 token 计费")
     ap.add_argument("--doctor", action="store_true", help="只打印环境诊断")
     args = ap.parse_args()
 
@@ -310,7 +352,8 @@ def main() -> int:
         urls.insert(0, args.url)
 
     log("S0", f"共 {len(urls)} 条待处理")
-    results = [run_one(u, args.workdir, args.skip_asr, args.fresh, args.prompt) for u in urls]
+    results = [run_one(u, args.workdir, args.skip_asr, args.fresh, args.prompt, args.ocr)
+               for u in urls]
 
     print("\n" + "=" * 60)
     ok = sum(1 for r in results if r["status"] == "done")
@@ -319,6 +362,8 @@ def main() -> int:
         print(f"{flag} {r['url']}  [{r['status']}, 停在 {r['stage']}]")
         if r.get("draft"):
             print(f"    草稿 → {r['draft']}")
+    if not args.ocr and config.deepseek_key():
+        print("\n提示：加 --ocr 可识别画面上的文字卡（作者常把配方/参数打在屏幕上而不念出来）。")
     print(f"\n完成 {ok}/{len(results)}。草稿需补正文后移入 Obsidian 收件箱。")
     return 0 if ok == len(results) else 3
 
