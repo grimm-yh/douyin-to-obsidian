@@ -5,7 +5,7 @@
 优先级（高 → 低）：
     CLI 参数  >  环境变量  >  配置文件  >  自动探测  >  内置默认
 
-配置文件：`~/.douyin-to-obsidian.json`（可选），形如
+配置文件：`~/.video-to-obsidian.json`（可选），形如
     {
       "browser_exe": "C:/Program Files/Google/Chrome/Application/chrome.exe",
       "model_dir": "D:/models/faster-whisper-large-v3",
@@ -27,7 +27,20 @@ import shutil
 import sys
 
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".douyin-to-obsidian.json")
+
+# 主配置路径；旧名字保留为回退，改了名之后老的配置文件依然生效
+CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".video-to-obsidian.json")
+_LEGACY_CONFIG = os.path.join(os.path.expanduser("~"), ".douyin-to-obsidian.json")
+
+# 环境变量前缀。新前缀优先，旧前缀 DY_* 继续兼容。
+_ENV = {
+    "browser_exe": ("VTO_BROWSER_EXE", "DY_BROWSER_EXE"),
+    "model_dir": ("WHISPER_MODEL",),
+    "vault": ("OBSIDIAN_VAULT",),
+    "port": ("VTO_CDP_PORT", "DY_CDP_PORT"),
+    "deepseek_api_key": ("DEEPSEEK_API_KEY",),
+    "bili_sessdata": ("BILI_SESSDATA",),
+}
 
 # 各平台常见浏览器位置。顺序即优先级。
 _BROWSER_CANDIDATES = [
@@ -49,11 +62,15 @@ _BROWSER_CANDIDATES = [
 
 
 def _file_cfg() -> dict:
-    try:
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
+    for p in (CONFIG_PATH, _LEGACY_CONFIG):
+        try:
+            with open(p, encoding="utf-8") as f:
+                d = json.load(f)
+            if isinstance(d, dict) and d:
+                return d
+        except Exception:
+            continue
+    return {}
 
 
 _CFG = _file_cfg()
@@ -63,11 +80,10 @@ def get(key: str, cli_value=None, default=None):
     """按优先级取配置。"""
     if cli_value not in (None, ""):
         return cli_value
-    env_key = {"browser_exe": "DY_BROWSER_EXE", "model_dir": "WHISPER_MODEL",
-               "vault": "OBSIDIAN_VAULT", "port": "DY_CDP_PORT"}.get(key)
-    if env_key and os.environ.get(env_key):
-        v = os.environ[env_key]
-        return int(v) if key == "port" else v
+    for env_key in _ENV.get(key, ()):
+        if os.environ.get(env_key):
+            v = os.environ[env_key]
+            return int(v) if key == "port" else v
     if _CFG.get(key) not in (None, ""):
         return _CFG[key]
     if key == "browser_exe":
@@ -164,12 +180,31 @@ def bili_sessdata(cli_value: str | None = None) -> str | None:
     return _CFG.get("bili_sessdata") or None
 
 
+def save_setting(key: str, value) -> str:
+    """把单个配置项写回主配置文件，保留其他字段。返回写入路径。"""
+    data: dict = {}
+    for p in (CONFIG_PATH, _LEGACY_CONFIG):
+        try:
+            with open(p, encoding="utf-8") as f:
+                d = json.load(f)
+            if isinstance(d, dict):
+                data = d
+                break
+        except Exception:
+            continue
+    data[key] = value
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    return CONFIG_PATH
+
+
 def dump() -> str:
     """`--doctor` 用：打印解析结果，方便排查。"""
     browser = get("browser_exe")
     model = get("model_dir")
+    used_cfg = next((p for p in (CONFIG_PATH, _LEGACY_CONFIG) if os.path.exists(p)), None)
     lines = [
-        f"配置文件      : {CONFIG_PATH} {'(存在)' if _CFG else '(不存在，使用默认)'}",
+        f"配置文件      : {used_cfg or CONFIG_PATH + '（不存在，使用默认）'}",
         f"Python        : {python_exe()}",
         f"浏览器        : {browser or '✗ 未找到，请设 DY_BROWSER_EXE'}",
         f"模型目录      : {model or '✗ 未找到，请设 WHISPER_MODEL'}",

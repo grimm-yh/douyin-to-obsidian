@@ -57,7 +57,7 @@ def preflight(need_browser: bool = True) -> bool:
     if need_browser:
         exe = config.get("browser_exe")
         if not exe or not os.path.isfile(exe):
-            log("S0", "✗ 找不到浏览器，设 DY_BROWSER_EXE 或写入 ~/.douyin-to-obsidian.json")
+            log("S0", "✗ 找不到浏览器，设 DY_BROWSER_EXE 或写入 ~/.video-to-obsidian.json")
             ok = False
     model = config.get("model_dir")
     if not model or not os.path.isdir(model):

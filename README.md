@@ -1,4 +1,4 @@
-# douyin-to-obsidian
+# video-to-obsidian
 
 把视频链接变成结构化 Obsidian 笔记的一条命令流水线。支持**抖音**和**哔哩哔哩**。
 
@@ -20,8 +20,8 @@
 ### 下载安装
 
 ```bash
-git clone https://github.com/grimm-yh/douyin-to-obsidian.git
-cd douyin-to-obsidian
+git clone https://github.com/grimm-yh/video-to-obsidian.git
+cd video-to-obsidian
 
 pip install faster-whisper numpy websocket-client
 pip install nvidia-cublas-cu12 nvidia-cudnn-cu12      # 有 NVIDIA 显卡时装；纯 CPU 可跳过
@@ -50,7 +50,7 @@ python scripts/pipeline.py --doctor
 
 ```bash
 cd ~/.workbuddy/skills
-git clone https://github.com/grimm-yh/douyin-to-obsidian.git
+git clone https://github.com/grimm-yh/video-to-obsidian.git
 ```
 
 放好后新开一个会话，直接把链接发给 agent 即可，不用记命令。
@@ -98,7 +98,7 @@ B 站多 P 视频默认只处理第 1P，用 `--page N` 指定其他。
 | `vault` | `OBSIDIAN_VAULT` | Obsidian 库根目录 | 仅影响 `--doctor` 的显示，不影响流水线 |
 | `port` | `DY_CDP_PORT` | 隔离浏览器调试端口 | 默认 9223，被占用时改 |
 
-配置写在 `~/.douyin-to-obsidian.json`：
+配置写在 `~/.video-to-obsidian.json`：
 
 ```json
 {

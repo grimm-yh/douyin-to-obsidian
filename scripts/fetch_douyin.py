@@ -259,7 +259,7 @@ def main() -> int:
         os.environ.get("TEMP") or os.environ.get("TMPDIR") or "/tmp", "dy-cdp-profile")
 
     if not exe or not os.path.isfile(exe):
-        log("✗ 找不到浏览器。设置 DY_BROWSER_EXE 环境变量，或写入 ~/.douyin-to-obsidian.json")
+        log("✗ 找不到浏览器。设置 DY_BROWSER_EXE 环境变量，或写入 ~/.video-to-obsidian.json")
         log("  运行 `python config.py` 可查看当前解析结果")
         return 2
 

@@ -266,7 +266,7 @@ def main():
 
     if not config.deepseek_key(args.api_key):
         sys.exit("缺少 DeepSeek API key。设 DEEPSEEK_API_KEY 环境变量，"
-                 "或写进 ~/.douyin-to-obsidian.json 的 deepseek_api_key 字段。")
+                 "或写进 ~/.video-to-obsidian.json 的 deepseek_api_key 字段。")
 
     payload = scan(args.video, args.start, args.end, args.batch, args.workers,
                    config.deepseek_key(args.api_key), args.out, args.keep_frames)

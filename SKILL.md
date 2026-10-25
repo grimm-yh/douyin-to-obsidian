@@ -1,5 +1,5 @@
 ---
-name: douyin-to-obsidian
+name: video-to-obsidian
 description: "把抖音或 B 站视频转成结构化 Obsidian 笔记的完整流水线：链接 → 下载最高可用画质 → 本地 ASR 转写（音频不出机器）→ 可选识别画面文字卡 → 生成带 frontmatter 的笔记草稿。当用户发来抖音/B 站链接并希望「整理成笔记 / 存进 Obsidian / 转成文字稿 / 提取口播内容 / 归档这个视频」，或要求批量处理视频、把视频知识点沉淀进知识库时使用。特别注意：作者常把配方克数、参数表、配料清单做成半透明卡片贴在画面上而不念出来，音频转写一定拿不到，需开启画面文字识别。也包含两个平台的抓取细节（抖音需 CDP 绕过 a_bogus 签名、B 站走公开 API 无需浏览器）。不做视频剪辑、不做字幕翻译。"
 agent_created: true
 ---
@@ -119,11 +119,11 @@ pipeline 侧用 `try/except Exception` 兜底，单条失败不影响队列其�
 
 ## 安装
 
-源码：<https://github.com/grimm-yh/douyin-to-obsidian>。已装为本地 skill 时可跳过 clone，
+源码：<https://github.com/grimm-yh/video-to-obsidian>。已装为本地 skill 时可跳过 clone，
 直接用 `scripts/` 下的脚本。
 
 ```bash
-git clone https://github.com/grimm-yh/douyin-to-obsidian.git && cd douyin-to-obsidian
+git clone https://github.com/grimm-yh/video-to-obsidian.git && cd video-to-obsidian
 pip install faster-whisper numpy websocket-client
 pip install nvidia-cublas-cu12 nvidia-cudnn-cu12      # GPU 必需；纯 CPU 可跳过
 python scripts/fetch_model.py                          # 拉 3.08GB large-v3 到 ./models/
@@ -150,7 +150,7 @@ export DEEPSEEK_API_KEY="sk-..."              # 可选，画面文字识别
 export BILI_SESSDATA="..."                    # 可选，B 站高清
 ```
 
-或写 `~/.douyin-to-obsidian.json`：
+或写 `~/.video-to-obsidian.json`：
 
 ```json
 {

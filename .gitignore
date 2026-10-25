@@ -30,4 +30,5 @@ venv/
 Thumbs.db
 
 # 本地配置（可能含个人路径）
+.video-to-obsidian.json
 .douyin-to-obsidian.json
