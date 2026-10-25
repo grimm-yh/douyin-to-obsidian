@@ -1,286 +1,217 @@
 # douyin-to-obsidian
 
-把抖音链接变成结构化 Obsidian 笔记的一条命令流水线。
-
-**下载 → 本地转写（音频不出机器）→ 识别画面文字 → 生成带中文 frontmatter 的笔记草稿。**
-不需要登录、不需要退出你正在用的浏览器。
+把视频链接变成结构化 Obsidian 笔记的一条命令流水线。支持**抖音**和**哔哩哔哩**。
 
 ```
-抖音链接
-  → [S1] 短链解析 + 隔离浏览器实例抓 aweme_detail
-  → [S2] ffmpeg 带 Referer 下最高码率
-  → [S3] 本地 faster-whisper 转写
-  → [S3b] 视觉模型识别画面文字卡（--ocr，可选）
-  → [S4] 按模板生成 note_draft.md
-  → [人工/AI] 归纳正文 → 移入 Obsidian 收件箱
+链接 → 下载 → 本地转写（音频不出机器）→ 可选识别画面文字 → 生成带 frontmatter 的笔记草稿
 ```
 
-它同时是一个 **Claude / WorkBuddy / Codex 通用 Skill**：`SKILL.md` 描述了什么情况下该用、怎么用、有哪些坑，任何支持 skill 的 agent 都能直接调用。
+## 技能作用
 
----
-
-## 为什么不能更简单（省得你重走弯路）
-
-这三条路我都试过，全部失败，结论写在 `SKILL.md` 里：
-
-| 想法 | 为什么不行 |
+| 环节 | 做什么 |
 |---|---|
-| `yt-dlp` 直接下 | 抖音 `/aweme/v1/web/aweme/detail/` 返回 **403**。根因是没实现 `a_bogus` 签名。**带真登录 cookie 也照样 403** |
-| HTTP 直取页面扒 `_ROUTER_DATA` | 返回 72KB HTML 里 `play_addr` 出现 **0 次**，`RENDER_DATA` 不存在 |
-| 无头浏览器 / 伪造签名 | 属于绕过平台访问控制，违反 ToS，且平台一改就失效 |
-
-**唯一可行**：起一个**隔离的**真实浏览器实例（独立 `--user-data-dir`、非默认端口），让页面自己算签名、自己发请求，脚本只读它返回的响应。
-
-等价于人工打开 DevTools 看 Network 面板 —— 不伪造、不注入、不触碰风控。
-
-这样做还有两个副作用，都是好处：
-
-- **不需要登录**：实测未登录态也能拿到完整 `aweme_detail`
-- **不占用你的浏览器**：隔离实例，你自己那份 Chrome 不用退、不用关、profile 不受影响
-
----
+| 下载 | 抖音走隔离浏览器实例抓接口；B 站走公开 API（不需要浏览器）。均自动选最高可用码率 |
+| 转写 | 本地 faster-whisper large-v3，音频不离开本机 |
+| 画面文字 | 可选。识别视频里烧进画面的信息卡（配方克数、参数表、清单），这些内容口播往往不念 |
+| 草稿 | 按固定模板生成 Markdown，frontmatter 已填好，直接进 Obsidian 收件箱待归纳 |
 
 ## 安装
+
+### 下载安装
 
 ```bash
 git clone https://github.com/grimm-yh/douyin-to-obsidian.git
 cd douyin-to-obsidian
 
 pip install faster-whisper numpy websocket-client
-pip install nvidia-cublas-cu12 nvidia-cudnn-cu12   # GPU 必需；纯 CPU 可跳过
-python scripts/fetch_model.py                     # 拉 3.08GB large-v3 到 ./models/
+pip install nvidia-cublas-cu12 nvidia-cudnn-cu12      # 有 NVIDIA 显卡时装；纯 CPU 可跳过
+python scripts/fetch_model.py                         # 下载 large-v3 权重（约 3.1GB）
 ```
 
-系统依赖：
+另需系统装有 `ffmpeg`、`ffprobe`，以及一个 Chromium 系浏览器（Chrome / Chromium / Edge 任一，仅抖音需要）。
 
-- `ffmpeg`、`ffprobe` 在 `PATH` 中
-- 一个 Chromium 系浏览器（Chrome / Chromium / Edge / Chrome++ 均可，自动探测）
-
-画面文字识别（`--ocr`）另需 **DeepSeek API key**，纯标准库调用，不用装 SDK：
-
-```bash
-export DEEPSEEK_API_KEY="sk-..."
-```
-
-不配也能用，只是拿不到「作者打在屏幕上但没念出来」的内容。
-
-环境诊断：
+装完先自检：
 
 ```bash
 python scripts/pipeline.py --doctor
 ```
 
-```
-配置文件      : ~/.douyin-to-obsidian.json (不存在，使用默认)
-Python        : C:\Python314\python.exe
-浏览器        : D:\Program Files (x86)\Chrome\App\Chrome.exe
-模型目录      : ...\video-to-skill\models\faster-whisper-large-v3
-  model.bin   : ✓
-ffmpeg        : ✓
-faster-whisper: ✓ 1.2.1
-websocket-cli : ✓
-```
+各项显示 `✓` 即可用，缺项按提示补。
 
----
+### Agent 安装
 
-## 用法
+把仓库整个放到对应 agent 的 skills 目录，agent 靠根目录的 `SKILL.md` 自动发现：
+
+| Agent | 目录 |
+|---|---|
+| WorkBuddy | `~/.workbuddy/skills/` |
+| Claude Code | `~/.claude/skills/` |
+| Codex | `~/.codex/skills/` |
 
 ```bash
-# 完整链路
-python scripts/pipeline.py "https://v.douyin.com/XXXX/"
+cd ~/.workbuddy/skills
+git clone https://github.com/grimm-yh/douyin-to-obsidian.git
+```
 
-# 带领域词 —— 强烈建议，专业术语错字明显减少
-python scripts/pipeline.py "<链接>" --prompt "AI编程,agent,上下文压缩"
+放好后新开一个会话，直接把链接发给 agent 即可，不用记命令。
 
-# 加上画面文字识别（菜谱、参数表、清单类视频必加）
+## 使用方式
+
+```bash
+# 基本用法
+python scripts/pipeline.py "<链接>"
+
+# 加画面文字识别（菜谱、参数、清单类视频建议加）
 python scripts/pipeline.py "<链接>" --ocr
 
-# 只要视频，不转写
+# 带领域词，降低专业术语错字
+python scripts/pipeline.py "<链接>" --prompt "示例词甲,示例词乙"
+
+# 只下视频不转写
 python scripts/pipeline.py "<链接>" --skip-asr
 
-# 批量消费剪贴板队列
-python scripts/pipeline.py --queue queue.jsonl --ocr
+# 批量消费队列
+python scripts/pipeline.py --queue queue.jsonl
 ```
 
-剪贴板入口（仅 Windows，手机上「复制链接」即完成投递）：
+支持的链接形式：
 
-```bash
-python scripts/clip_watch.py     # 常驻监听，识别到抖音链接就写 queue.jsonl
-```
-
----
-
-## 输出契约
-
-```text
-<workdir>/
-├── dy-<aweme_id>.api.json               # 原始接口响应（排错用）
-└── downloads/douyin-<aweme_id>/
-    ├── video.mp4                        # 最高可用码率
-    ├── metadata.json                    # 标题/作者/时长/全部码率档
-    ├── post_caption.txt                 # 原始文案（含 hashtag）
-    ├── video.txt                        # 带 [mm:ss] 时间戳的转写
-    ├── video.segments.jsonl             # 分段 {start,end,text}
-    ├── overlay_text.json                # 画面文字（--ocr 时产出）
-    └── note_draft.md                    # 笔记草稿，frontmatter 已填好
-```
-
-`note_draft.md` 的 frontmatter 是固定的 6 个中文字段：
-
-```yaml
----
-标题: 油泼辣子-香而不燥红润油亮
-来源: https://v.douyin.com/aDQ_ck64ans/
-作者: 二婶儿教做菜（带着二叔）
-创建时间: 2026-10-25
-状态: 待复核
-标签:
-  - 家常菜
-  - 调味料
----
-```
-
-> **S4 之后必须补正文，不要直接入库。** 草稿只有骨架，正文需要 AI 归纳或人工整理。为什么见下面的「已知限制」。
-
----
-
-## 画面文字：口播没说的那些数字
-
-抖音口播视频有个固定套路——**关键数字不念，做成半透明卡片打在屏幕上**。
-
-真实案例，一条油泼辣子教程：
-
-| 时间 | 口播说 | 画面卡片写 |
-|---|---|---|
-| `00:30` | 「具体的克数，我一会儿就给您打在屏幕上」 | 细辣椒面 50g / 粗辣椒面 100g / 花椒面 10g |
-| `03:35` | 「咱们再加一小点醋进去」「糖再一小勺」 | 米醋 **30g** / 糖 1 小勺 |
-
-`03:35` 那处最典型：**「米醋 30g」这个数字在音频里根本不存在。** 只做 ASR 的笔记，配方永远是「一小点」。
-
-另一条讲任务交接的视频（84 秒），画面上有 11 处文字卡，等于把整片的结构骨架摊在画面上——这些内容口播里也都有，但画面上更准确。
-
-### 怎么做的
-
-```
-1fps 抽帧（缩到 720 宽，够认字又省 token）
-  → 每 30 帧打包成一次请求（DeepSeek 单请求支持 600 张图）
-  → 模型自己挑出「有叠加文字」的帧并逐字抄写
-  → 相邻秒、内容相同的合并
-```
-
-在同一个请求里，模型被要求**跳过画面最底部那条随说话滚动的对白字幕**——那层内容 ASR 已经有，重复采集没意义。
-
-### 成本参考
-
-| 视频 | 帧数 | 耗时 | tokens |
-|---|---|---|---|
-| 245 秒 / 1080p | 245 | 16.5s | 153K |
-| 84 秒 / 1080p | 84 | 100s | 56K |
-
-约 **600 tokens/帧**。第二条更慢是因为文字卡多、输出长。
-
-### 两个我试过但走不通的办法
-
-| 想法 | 结果 |
+| 平台 | 形式 |
 |---|---|
-| 用像素差分找「静止不动的叠加层」，只送那几帧省 token | **失败**。卡片是半透明的，背景的手在动、菜在翻都透过蒙层显示出来，该区域帧间差异 28–33，和全片其他地方（中位 33.5）毫无区别 |
-| 抽帧间隔拉长到 5 秒以上 | **会漏**。`03:35` 那处卡片只存在约 2 秒，我用 15 秒间隔的缩略图扫过两遍都没看见 |
+| 抖音 | `https://v.douyin.com/<短码>/`、`https://www.douyin.com/video/<数字ID>` |
+| B 站 | `https://www.bilibili.com/video/BV<10位>`、`.../video/av<数字>`、`https://b23.tv/<短码>` |
 
-所以别在抽帧优化上花功夫，**老老实实 1fps 全片扫**。
+B 站多 P 视频默认只处理第 1P，用 `--page N` 指定其他。
 
----
+产物落在 `<workdir>/downloads/<平台>-<ID>/`，其中 `note_draft.md` 是待归纳的草稿，`overlay_text.json` 是画面文字识别结果（加了 `--ocr` 才有）。
 
-## 已知限制（如实说明）
+## 需要修改的配置项
 
-这是这套工具最重要的部分。**如果你需要的是「精确数字」，它给不了。**
+全部可选。不配也能跑，只是能力有取舍。
 
-| 限制 | 实测数据 | 应对 |
-|---|---|---|
-| **真人口播字错率** | **3–4%**（TTS 清晰朗读约 1.4%） | 草稿强制标 `状态: 待复核`；关键数字与专有名词必须回看原片 |
-| 典型错例 | 「碗的1分钟」→ 应为 1/2；「酒的扩重」→ 克重；「装好封颜色」→ 封严 | 归纳时在「存疑」一节显式列出 |
-| **画面文字需显式开启** | 默认关，不加 `--ocr` 就不识别 | 菜谱 / 参数 / 清单类视频**一定加** |
-| 画面也只覆盖「打在屏幕上」的 | 作者既没念也没打在屏幕上的量（如「白芝麻 多来点」）无从得知 | 按状态判据或「适量」处理 |
-| 网页免费档码率 | 单视频页最高 `normal_1080_0`（1080p / ~680kbps）；**合集页只到 720p** | 别指望高码率原片 |
-| 短句破碎 | 抖音口播节奏快，155 段 / 245 秒是常态（约 2.3s 一段） | 归纳时合并同义段，别逐段抄 |
-| 地址时效 | 播放地址带 `cdn_url_expired` | 抓完尽快下载，别搁置 |
+| 配置项 | 环境变量 | 作用 | 不配的后果 |
+|---|---|---|---|
+| `deepseek_api_key` | `DEEPSEEK_API_KEY` | 画面文字识别 | 不加 `--ocr` 时不会识别画面上的文字卡 |
+| `bili_sessdata` | `BILI_SESSDATA` | B 站登录态 | B 站最高只能下 480P，画质低时画面文字可能认不清 |
+| `browser_exe` | `DY_BROWSER_EXE` | 浏览器路径 | 自动探测常见位置；探测不到则抖音链接无法处理 |
+| `model_dir` | `WHISPER_MODEL` | 转写模型目录 | 自动扫描本机已有模型；找不到则需先跑 `fetch_model.py` |
+| `vault` | `OBSIDIAN_VAULT` | Obsidian 库根目录 | 仅影响 `--doctor` 的显示，不影响流水线 |
+| `port` | `DY_CDP_PORT` | 隔离浏览器调试端口 | 默认 9223，被占用时改 |
 
-一个真实例子：一条油泼辣子教程里，辣椒面的克数写在画面上但没念出来。加 `--ocr` 之后这些数字能捞回来（见上面「画面文字」一节）——但也只限于**作者确实打在屏幕上**的量。白芝麻这种只说「多来点」的，谁都拿不到。
-
-性能参考：large-v3 在 RTX 显卡上约 **5–5.5 倍实时**（34 秒音频 → 6.2 秒推理）。纯 CPU 慢 10–20 倍。
-
----
-
-## 配置
-
-优先级：**CLI 参数 > 环境变量 > 配置文件 > 自动探测**。
-
-```bash
-export DY_BROWSER_EXE="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-export WHISPER_MODEL="/path/to/faster-whisper-large-v3"
-export OBSIDIAN_VAULT="/path/to/vault"    # 可选
-export DY_CDP_PORT=9223                    # 可选，隔离实例端口
-```
-
-或写 `~/.douyin-to-obsidian.json`：
+配置写在 `~/.douyin-to-obsidian.json`：
 
 ```json
 {
-  "browser_exe": "C:/Program Files/Google/Chrome/Application/chrome.exe",
-  "model_dir": "D:/models/faster-whisper-large-v3",
-  "vault": "D:/Notes/Obsidian",
+  "deepseek_api_key": "<你的密钥>",
+  "bili_sessdata": "<你的登录态>",
   "port": 9223
 }
 ```
 
-自动探测会找常见浏览器路径，也会**复用本机其他 skill 已下载的模型**（扫描同级目录与 HuggingFace 缓存），所以很多时候不用配。
-
-也支持 macOS / Linux：浏览器探测覆盖 `/Applications/*`、`/usr/bin/google-chrome` 等；剪贴板监听目前仅 Windows。
-
----
+该文件不随仓库分发，也不会被提交。
 
 ## 目录结构
 
 ```text
-douyin-to-obsidian/
-├── SKILL.md                    # agent 读的说明书：何时用、怎么用、边界在哪
+.
+├── SKILL.md                    # agent 读取的说明书：适用场景、流程、排错
+├── README.md
+├── LICENSE
 ├── references/
-│   ├── note-template.md        # frontmatter 字段 + 排版规范
+│   ├── note-template.md        # frontmatter 字段与排版规范
 │   └── troubleshooting.md      # 症状 → 根因 → 处置
-├── scripts/
-│   ├── pipeline.py             # 主入口，串 S0–S4
-│   ├── config.py               # 统一配置解析（跨平台自动探测）
-│   ├── fetch_douyin.py         # 起隔离浏览器 + 内联 CDP 抓接口响应
-│   ├── douyin_dl.py            # 解析 bit_rate[] 取最高档 + ffmpeg 下载
-│   ├── asr_local.py            # faster-whisper 转写（绕开 PyAV）
-│   ├── ocr_frames.py           # 画面文字识别（视觉模型，纯标准库）
-│   ├── fetch_model.py          # 下载 large-v3 权重
-│   └── clip_watch.py           # Windows 剪贴板监听
-└── .gitignore                  # models/ 3GB 与产物不入库
+└── scripts/
+    ├── pipeline.py             # 主入口，串联各环节
+    ├── config.py               # 配置解析与自动探测
+    ├── fetch_douyin.py         # 抖音：隔离浏览器 + 内联 CDP
+    ├── douyin_dl.py            # 抖音：选最高码率并下载
+    ├── bili_fetch.py           # B 站：解析链接 + 调 API + 下载合并
+    ├── asr_local.py            # 本地转写
+    ├── ocr_frames.py           # 画面文字识别
+    ├── fetch_model.py          # 下载转写模型
+    └── clip_watch.py           # Windows 剪贴板监听（可选入口）
 ```
 
-**`fetch_douyin.py` 是完全自包含的** —— 内联了约 50 行 CDP 客户端，不依赖任何外部 skill。
+## 示例
 
+以下数据全部虚构，仅示意输出形态。
+
+输入：
+
+```bash
+python scripts/pipeline.py "https://www.bilibili.com/video/BV1Ab4y1c7De" --ocr
+```
+
+终端输出：
+
+```text
+[S0] ✓ 模型 / ffmpeg 齐备
+[S1] 处理 https://www.bilibili.com/video/BV1Ab4y1c7De
+[bili] 示例视频：三步做出番茄炒蛋
+[bili] UP 主 示例频道 | 时长 96s
+[bili] 画质 1280x720
+[bili] ✓ video.mp4  4.2MB
+[S3] [asr] ✓ video  96.0s 音频 / 19.4s 推理 / 4.9x  61 段
+[S3b] [ocr] ✓ 命中 1 处 / 用时 8.1s
+  00:12  配料示例 番茄200g 鸡蛋3个
+[S4] ✓ 草稿 note_draft.md
+[S4]   画面文字: 1 处已并入草稿
+```
+
+生成的 `note_draft.md`：
+
+```markdown
+---
+标题: 示例视频：三步做出番茄炒蛋
+来源: https://www.bilibili.com/video/BV1Ab4y1c7De
+作者: 示例频道
+创建时间: 2026-01-01
+状态: 待复核
+标签:
+  - 示例标签甲
+  - 示例标签乙
 ---
 
-## 两个值得记住的坑
+# 示例视频：三步做出番茄炒蛋
 
-**1. 启动 / 抓取 / 关闭必须在同一进程内完成。**
-拆成两条命令就会失败：`Popen` 的子进程树会随父进程退出被清理，浏览器瞬间消失。
+> **一句话结论**
+> （待填）
 
-**2. `collect` 必须带 `--goto` 强制重新导航。**
-只是「连接到」一个已加载的页面，捕获不到任何响应 —— 因为 `aweme_detail` 是页面加载后由 XHR 二次发起的。
+## 一、待填
 
-更多症状见 `references/troubleshooting.md`。
+## 二、待填
 
----
+## 三、可执行动作
 
-## 合规与免责
+- [ ] 待填
 
-- 本项目**只读取你自己浏览器正常访问时产生的网络响应**，不伪造签名、不破解加密、不绕过访问控制。
-- 请仅用于**个人学习与内容归档**。下载的内容版权属原作者，二次分发或商用请自行取得授权。
-- 请遵守抖音的用户协议与 `robots.txt`。高频批量抓取会给对方服务器造成压力，也可能触发风控，**本项目不鼓励也不支持这种行为**。
-- 转写文本存在 3–4% 错字率，**不要把它当作逐字准确的引用来源**。
-- 开启 `--ocr` 时，视频**画面截图**会上传到 DeepSeek 的 API 做识别。若视频含敏感信息（证件、聊天记录、人脸特写），请自行判断是否适合开启——这时候可以只用转写、跳过画面识别。
+## 四、存疑 / 未验证
+
+- （待填）
+
+## 五、画面文字（视觉识别）
+
+> 以下内容来自画面里的文字卡，**不在口播转写中**。归纳配方/参数时优先用它。
+
+### `00:12`
+
+```text
+配料示例
+番茄200g
+鸡蛋3个
+```
+
+## 六、原文转写
+（略）
+```
+
+## 免责声明
+
+- 本项目只读取浏览器正常访问时产生的网络响应，以及平台公开接口返回的数据，不伪造签名、不破解加密、不绕过访问控制。
+- 仅供个人学习与内容归档。下载内容版权归原作者，二次分发或商用请自行取得授权。
+- 请遵守各平台用户协议与 `robots.txt`。高频批量抓取会给对方服务器造成压力并可能触发风控，本项目不支持此类用法。
+- 转写结果存在约 3–4% 字错率，画面文字识别也可能读错，**不要当作逐字准确的引用来源**。
+- 开启 `--ocr` 时，视频画面截图会上传至第三方模型接口做识别。含敏感信息（证件、聊天记录、人脸）的视频请自行判断是否开启。
 - 使用本项目产生的一切后果由使用者自行承担。
 
 ## License

@@ -151,6 +151,19 @@ def deepseek_key(cli_value: str | None = None) -> str | None:
     return _CFG.get("deepseek_api_key") or None
 
 
+def bili_sessdata(cli_value: str | None = None) -> str | None:
+    """B 站 SESSDATA，用于提升画质（可选能力）。
+
+    未登录时 playurl 只给到 480P；带上 SESSDATA 才能拿 720P / 1080P。
+    优先级：CLI > 环境变量 BILI_SESSDATA > 配置文件 bili_sessdata。
+    """
+    if cli_value:
+        return cli_value
+    if os.environ.get("BILI_SESSDATA"):
+        return os.environ["BILI_SESSDATA"]
+    return _CFG.get("bili_sessdata") or None
+
+
 def dump() -> str:
     """`--doctor` 用：打印解析结果，方便排查。"""
     browser = get("browser_exe")
@@ -178,6 +191,8 @@ def dump() -> str:
         lines.append("websocket-cli : ✗ 未安装（pip install websocket-client）")
     k = deepseek_key()
     lines.append(f"DeepSeek key  : {'✓ 已配置（画面文字识别可用）' if k else '✗ 未配置（跳过画面文字识别）'}")
+    s = bili_sessdata()
+    lines.append(f"B站 SESSDATA  : {'✓ 已配置（可取高清）' if s else '✗ 未配置（B站最高 480P）'}")
     return "\n".join(lines)
 
 

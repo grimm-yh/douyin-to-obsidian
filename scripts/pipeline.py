@@ -51,11 +51,14 @@ def log(stage: str, msg: str) -> None:
 
 # ---------------------------------------------------------------- S0
 
-def preflight() -> bool:
+def preflight(need_browser: bool = True) -> bool:
+    """need_browser=False 时（纯 B 站任务）不强制要求浏览器。"""
     ok = True
-    exe = config.get("browser_exe")
-    if not exe or not os.path.isfile(exe):
-        log("S0", "✗ 找不到浏览器，设 DY_BROWSER_EXE 或写入 ~/.douyin-to-obsidian.json"); ok = False
+    if need_browser:
+        exe = config.get("browser_exe")
+        if not exe or not os.path.isfile(exe):
+            log("S0", "✗ 找不到浏览器，设 DY_BROWSER_EXE 或写入 ~/.douyin-to-obsidian.json")
+            ok = False
     model = config.get("model_dir")
     if not model or not os.path.isdir(model):
         log("S0", "✗ 找不到模型目录，设 WHISPER_MODEL（可用 fetch_model.py 下载）"); ok = False
@@ -64,7 +67,7 @@ def preflight() -> bool:
         if not shutil.which(b):
             log("S0", f"✗ 缺少 {b}"); ok = False
     if ok:
-        log("S0", "✓ 浏览器 / 模型 / ffmpeg 齐备")
+        log("S0", "✓ " + ("浏览器 / 模型 / ffmpeg 齐备" if need_browser else "模型 / ffmpeg 齐备"))
     return ok
 
 
@@ -248,27 +251,73 @@ def step_draft(folder: str, source_url: str, overlay: list[dict] | None = None) 
     return out
 
 
-# ---------------------------------------------------------------- 主流程
+# ---------------------------------------------------------------- 平台分派
 
-def run_one(url: str, workdir: str, skip_asr: bool, fresh: bool,
-            prompt: str | None, ocr: bool = False) -> dict:
-    res = {"url": url, "status": "failed", "stage": "S1"}
+def detect_platform(url: str) -> str | None:
+    """只认抖音和 B 站，其余一律返回 None 让上层拒绝。"""
+    u = url.lower()
+    if "douyin.com" in u or "iesdouyin.com" in u:
+        return "douyin"
+    if "bilibili.com" in u or "b23.tv" in u:
+        return "bilibili"
+    return None
+
+
+def stage_douyin(url: str, workdir: str, fresh: bool) -> tuple[str | None, str]:
+    """抖音的 S1+S2：CDP 抓接口 + ffmpeg 下载。返回 (folder, stage)。"""
     log("S1", f"处理 {url}")
     aid = resolve_aweme_id(url)
     if not aid:
         log("S1", "✗ 无法解析 aweme_id（链接失效 / 非抖音 / 网络问题）")
-        return res
+        return None, "S1"
     log("S1", f"✓ aweme_id = {aid}")
-    res["aweme_id"] = aid
 
     api = step_collect(aid, workdir, fresh)
     if not api:
-        return res
-    res["stage"] = "S2"
-
+        return None, "S1"
     folder = step_download(api, workdir)
     if not folder:
         log("S2", "✗ 下载失败")
+        return None, "S2"
+    return folder, "S2"
+
+
+def stage_bilibili(url: str, workdir: str, page: int | None,
+                   fresh: bool = False) -> tuple[str | None, str]:
+    """B 站的 S1+S2：公开 API，不需要浏览器。返回 (folder, stage)。"""
+    log("S1", f"处理 {url}")
+    try:
+        import bili_fetch
+        # bili_fetch 的 log 只收一条消息，这里适配成 pipeline 的两段式
+        r = bili_fetch.fetch(url, workdir, config.bili_sessdata(), page,
+                             log=lambda m: log("S1", m), fresh=fresh)
+    except Exception as e:
+        # BiliError 自带人话说明；其他异常也一并兜住，不让整个队列中断
+        log("S1", f"✗ {e}")
+        return None, "S1"
+    return r["folder"], "S2"
+
+
+# ---------------------------------------------------------------- 主流程
+
+def run_one(url: str, workdir: str, skip_asr: bool, fresh: bool,
+            prompt: str | None, ocr: bool = False, page: int | None = None) -> dict:
+    res = {"url": url, "status": "failed", "stage": "S1"}
+
+    plat = detect_platform(url)
+    if not plat:
+        log("S1", "✗ 无法识别的链接。只支持抖音和 B 站，例如：")
+        log("S1", "    https://v.douyin.com/xxxxxxx/")
+        log("S1", "    https://www.bilibili.com/video/BV1xxxxxxxxx")
+        return res
+    res["platform"] = plat
+
+    if plat == "douyin":
+        folder, stage = stage_douyin(url, workdir, fresh)
+    else:
+        folder, stage = stage_bilibili(url, workdir, page, fresh)
+    res["stage"] = stage
+    if not folder:
         return res
     res["folder"] = folder
     res["stage"] = "S3"
@@ -318,6 +367,8 @@ def main() -> int:
     ap.add_argument("--prompt", default=None, help="ASR 领域词，显著降低术语错字")
     ap.add_argument("--ocr", action="store_true",
                     help="识别画面上的文字卡（配方克数、参数表）。需 DeepSeek key，按 token 计费")
+    ap.add_argument("--page", type=int, default=None,
+                    help="B 站多 P 视频取第几 P（默认第 1P）")
     ap.add_argument("--doctor", action="store_true", help="只打印环境诊断")
     args = ap.parse_args()
 
@@ -327,10 +378,6 @@ def main() -> int:
     if not args.url and not args.queue:
         ap.print_help()
         return 2
-
-    if not preflight():
-        log("S0", "前置检查未通过，已停止")
-        return 3
 
     urls: list[str] = []
     if args.queue:
@@ -351,18 +398,26 @@ def main() -> int:
     if args.url:
         urls.insert(0, args.url)
 
+    # 只有要处理抖音链接时才强制要求浏览器；纯 B 站任务不需要
+    need_browser = any(detect_platform(u) == "douyin" for u in urls)
+    if not preflight(need_browser):
+        log("S0", "前置检查未通过，已停止")
+        return 3
+
     log("S0", f"共 {len(urls)} 条待处理")
-    results = [run_one(u, args.workdir, args.skip_asr, args.fresh, args.prompt, args.ocr)
+    results = [run_one(u, args.workdir, args.skip_asr, args.fresh, args.prompt,
+                       args.ocr, args.page)
                for u in urls]
 
     print("\n" + "=" * 60)
     ok = sum(1 for r in results if r["status"] == "done")
     for r in results:
         flag = {"done": "✓", "partial": "~", "failed": "✗"}[r["status"]]
-        print(f"{flag} {r['url']}  [{r['status']}, 停在 {r['stage']}]")
+        plat = r.get("platform", "?")
+        print(f"{flag} [{plat}] {r['url']}  [{r['status']}, 停在 {r['stage']}]")
         if r.get("draft"):
             print(f"    草稿 → {r['draft']}")
-    if not args.ocr and config.deepseek_key():
+    if not args.ocr and ok > 0 and config.deepseek_key():
         print("\n提示：加 --ocr 可识别画面上的文字卡（作者常把配方/参数打在屏幕上而不念出来）。")
     print(f"\n完成 {ok}/{len(results)}。草稿需补正文后移入 Obsidian 收件箱。")
     return 0 if ok == len(results) else 3
