@@ -168,9 +168,10 @@ def deepseek_key(cli_value: str | None = None) -> str | None:
 
 
 def bili_sessdata(cli_value: str | None = None) -> str | None:
-    """B 站 SESSDATA，用于提升画质（可选能力）。
+    """B 站 SESSDATA，用于提升画质 + 读字幕列表（可选能力）。
 
-    未登录时 playurl 只给到 480P；带上 SESSDATA 才能拿 720P / 1080P。
+    未登录时 playurl 只给到 480P，且 player/v2 查不到任何字幕。
+    带上 SESSDATA 才能拿 720P / 1080P，以及 76% 视频都有的 AI/CC 字幕。
     优先级：CLI > 环境变量 BILI_SESSDATA > 配置文件 bili_sessdata。
     """
     if cli_value:
@@ -227,7 +228,7 @@ def dump() -> str:
     k = deepseek_key()
     lines.append(f"DeepSeek key  : {'✓ 已配置（画面文字识别可用）' if k else '✗ 未配置（跳过画面文字识别）'}")
     s = bili_sessdata()
-    lines.append(f"B站 SESSDATA  : {'✓ 已配置（可取高清）' if s else '✗ 未配置（B站最高 480P）'}")
+    lines.append(f"B站 SESSDATA  : {'✓ 已配置（可取高清 + 读字幕列表）' if s else '✗ 未配置（B站最高 480P，且查不到字幕）'}")
     return "\n".join(lines)
 
 

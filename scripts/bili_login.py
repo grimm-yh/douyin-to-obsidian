@@ -28,7 +28,53 @@ from fetch_douyin import CDP, ensure_browser, shutdown, _http_json
 LOGIN_URL = "https://passport.bilibili.com/login"
 CHECK_URL = "https://api.bilibili.com/x/web-interface/nav"
 PROFILE = os.path.join(os.path.expanduser("~"), ".vto-bili-profile")
-TIMEOUT = 300
+TIMEOUT = 900
+
+
+def _sess_from_cookies(cdp) -> str | None:
+    """正路：问浏览器要 cookie 清单。"""
+    try:
+        r = cdp.send("Network.getAllCookies")
+    except Exception:
+        return None
+    for c in (r.get("cookies") or []):
+        if c.get("name") == "SESSDATA" and "bilibili" in (c.get("domain") or ""):
+            return c.get("value")
+    return None
+
+
+def _poke(cdp) -> None:
+    """让页面自己发一个同站请求，逼它把 cookie 带上网络层。
+
+    为什么不直接读 document.cookie：SESSDATA 是 HttpOnly，JS 永远看不到。
+    为什么不只靠 Network.getAllCookies：Chrome 新版在某些 profile 下会返回空数组
+    （默认 profile 实测 0 条）。但 Network.requestWillBeSent 里的 Cookie 请求头
+    是浏览器网络栈自己拼的，HttpOnly 与否都拦不住。
+    """
+    try:
+        cdp.send("Runtime.evaluate", {
+            "expression": "fetch('https://api.bilibili.com/x/web-interface/nav',"
+                          "{credentials:'include'}).catch(()=>{})",
+            "awaitPromise": False, "returnByValue": True, "silent": True}, timeout=10)
+    except Exception:
+        pass
+
+
+def _sess_from_events(cdp) -> str | None:
+    """兜底：从已发生的请求头里抠 SESSDATA。"""
+    for ev in list(cdp.events):
+        if ev.get("method") != "Network.requestWillBeSent":
+            continue
+        req = (ev.get("params") or {}).get("request") or {}
+        if "bilibili" not in (req.get("url") or ""):
+            continue
+        hdr = req.get("headers") or {}
+        raw = hdr.get("Cookie") or hdr.get("cookie") or ""
+        for part in raw.split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "SESSDATA" and v:
+                return v
+    return None
 
 
 def _verify(sessdata: str) -> dict | None:
@@ -110,16 +156,13 @@ def main() -> int:
         last_hint = 0
         while time.time() < deadline:
             tries += 1
-            try:
-                r = cdp.send("Network.getAllCookies")
-                cookies = (r.get("result") or {}).get("cookies") or []
-                sess = next((c["value"] for c in cookies
-                             if c["name"] == "SESSDATA" and "bilibili" in c.get("domain", "")),
-                            None)
-            except Exception:
-                pass
+            sess = _sess_from_cookies(cdp) or _sess_from_events(cdp)
             if sess:
                 break
+            if tries % 5 == 1:
+                _poke(cdp)          # 每 10 秒戳一次，制造带 cookie 的请求
+            if len(cdp.events) > 800:
+                del cdp.events[:-200]
             # 用日常 profile 时不该等：本来就该有登录态，没有就是没有
             if not need_scan and tries >= 3:
                 print("\n✗ 这个 profile 里没有 B 站登录态。可能没登录过，或登录已过期。")
@@ -140,8 +183,10 @@ def main() -> int:
         print("\n✓ 检测到 SESSDATA")
         info = _verify(sess)
         if info:
-            print(f"  登录有效：{info.get('uname')}  等级 Lv{info.get('level')}"
-                  f"  {'大会员' if info.get('vipStatus') else '普通用户'}")
+            lv = (info.get("level_info") or {}).get("current_level")
+            vip = (info.get("vipStatus") or 0) == 1
+            print(f"  登录有效：{info.get('uname')}  等级 Lv{lv}"
+                  f"  {'大会员' if vip else '普通用户'}")
         else:
             print("  ⚠ 用这个 SESSDATA 调接口没能通过验证，可能刚登录还没生效。")
             print("    已照样保存，稍后跑 pipeline.py --doctor 可复查。")
