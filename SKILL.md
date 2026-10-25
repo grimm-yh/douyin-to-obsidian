@@ -36,7 +36,11 @@ agent_created: true
 
 ## 安装
 
+源码：<https://github.com/grimm-yh/douyin-to-obsidian>。已装为本地 skill 时可跳过 clone，
+直接用 `scripts/` 下的脚本。
+
 ```bash
+git clone https://github.com/grimm-yh/douyin-to-obsidian.git && cd douyin-to-obsidian
 pip install faster-whisper numpy websocket-client
 pip install nvidia-cublas-cu12 nvidia-cudnn-cu12      # GPU 必需；纯 CPU 可跳过
 python scripts/fetch_model.py                          # 拉 3.08GB large-v3 到 ./models/

@@ -42,7 +42,7 @@
 ## 安装
 
 ```bash
-git clone <this-repo>
+git clone https://github.com/grimm-yh/douyin-to-obsidian.git
 cd douyin-to-obsidian
 
 pip install faster-whisper numpy websocket-client
