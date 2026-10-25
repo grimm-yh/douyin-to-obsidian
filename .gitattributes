@@ -1,0 +1,13 @@
+# 统一用 LF，避免跨平台 diff 噪音
+* text=auto eol=lf
+
+# Windows 脚本必须 CRLF，否则 cmd 解析器会静默失败
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制
+*.mp4 binary
+*.m4a binary
+*.wav binary
+*.bin binary

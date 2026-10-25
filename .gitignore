@@ -1,0 +1,33 @@
+# 模型权重（3GB，用 scripts/fetch_model.py 下载）
+models/
+*.bin
+*.pt
+
+# 流水线产物
+downloads/
+_smoke/
+*.api.json
+*.mp4
+*.m4a
+*.wav
+*.segments.jsonl
+queue.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# 打包产物
+*.zip
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 本地配置（可能含个人路径）
+.douyin-to-obsidian.json
